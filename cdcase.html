@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CD Case Spinner</title>
+<style>
+:root{--bg:#f6f5f2;--fg:#1d1d1d;--card:#fff;--line:#d9d6cf}
+@media (prefers-color-scheme:dark){:root{--bg:#171717;--fg:#eee;--card:#222;--line:#3a3a3a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;padding:16px}
+.wrap{max-width:520px;margin:0 auto}h1{font-size:18px;margin:4px 0 12px}
+canvas{width:100%;height:auto;border:1px solid var(--line);border-radius:12px;display:block;background:conic-gradient(#ccc 25%,#fff 0 50%,#ccc 0 75%,#fff 0) 0 0/20px 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px}
+label{display:block;font-size:13px;margin-bottom:10px}input[type=file],input[type=range],input[type=color],select{display:block;width:100%;margin-top:4px;font-size:15px}
+select{padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+button{width:100%;padding:12px;border:0;border-radius:10px;background:var(--fg);color:var(--bg);font-size:15px;font-weight:600}
+.tip{font-size:12px;opacity:.7;line-height:1.5;margin-top:8px}
+</style></head><body><div class="wrap">
+<h1>CD Case Spinner</h1>
+<canvas id="c" width="1000" height="600"></canvas>
+<div class="card">
+<label>앨범 디자인 사진 (케이스 앞면에 들어가요)<input type="file" id="alb" accept="image/*"></label>
+<label>CD 색<input type="color" id="col" value="#d7dbe6" style="height:40px"></label>
+<div style="display:flex;gap:8px"><label style="flex:1">회전 방향<select id="dir"><option value="1">시계 방향</option><option value="-1">반시계 방향</option><option value="0">멈춤</option></select></label>
+<label style="flex:1">한 바퀴 시간<select id="T"><option value="2">2초</option><option value="4" selected>4초</option><option value="6">6초</option><option value="8">8초</option></select></label></div>
+<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="art"> CD에도 앨범 사진 넣기</label>
+<label>가운데 빈 원 크기<input type="range" id="hole" min="10" max="120" value="50"></label>
+<div id="lay"></div>
+<button id="mk">투명 배경 GIF로 저장</button>
+<div id="msg" class="tip"></div>
+<div class="tip">GIF는 CD가 한 바퀴 도는 길이로 저장돼서 끊김 없이 반복돼요. 체크무늬 부분이 투명이에요.</div>
+</div></div>
+<script>
+var $=function(i){return document.getElementById(i)},cv=$("c"),g=cv.getContext("2d"),W0=1000,H0=600;
+var alb=null,chars=[null,null],elapsed=0,last=null,busy=false;
+function load(id,cb){$(id).addEventListener("change",function(e){var f=e.target.files[0];if(!f)return;var im=new Image();im.onload=function(){cb(im)};im.src=URL.createObjectURL(f)})}
+load("alb",function(im){alb=im});
+[0,1].forEach(function(i){
+  var d=document.createElement("div");d.className="card";
+  var o=function(s){return [["none","없음"],["nod","까딱"],["tilt","기울기"],["float","둥실"]].map(function(q){return '<option value="'+q[0]+'"'+(q[0]===s?" selected":"")+'>'+q[1]+'</option>'}).join("")};
+  d.innerHTML='<b style="font-size:13px">캐릭터 '+(i+1)+' (투명 배경 PNG)</b><input type="file" id="c'+i+'" accept="image/*" style="margin:6px 0 10px">'
+   +'<label>자리<select id="p'+i+'"><option value="fix" selected>CD 안 (고정)</option><option value="spin">CD 안 (CD랑 같이 돌아요)</option><option value="out">CD 밖 (앞에 나와요)</option></select></label>'
+   +'<label>움직임<select id="m'+i+'">'+o(i?"float":"nod")+'</select></label>'
+   +'<label>세기<select id="k'+i+'"><option value="0.6">약하게</option><option value="1" selected>보통</option><option value="1.6">세게</option></select></label>'
+   +'<label>크기<input type="range" id="h'+i+'" min="100" max="600" value="380"></label>'
+   +'<label>좌우<input type="range" id="x'+i+'" min="-500" max="500" value="'+(i?120:-120)+'"></label>'
+   +'<label>위아래<input type="range" id="y'+i+'" min="-300" max="300" value="40"></label>';
+  $("lay").appendChild(d);load("c"+i,function(im){chars[i]=im});
+});
+function cover(c,im,cx,cy,s){var r=Math.max(s/im.width,s/im.height),w=im.width*r,h=im.height*r;c.drawImage(im,cx-w/2,cy-h/2,w,h)}
+function mot(t,m,k,i,T){if(m==="none")return{x:0,y:0,r:0};var P=2*Math.PI*t/T+i*2.1,x=0,y=0,r=0;if(m==="nod")y=Math.sin(P*2)*14*k;else if(m==="tilt")r=Math.sin(P)*4*k;else{y=Math.sin(P)*10*k;x=Math.cos(P)*8*k}return{x:x,y:y,r:r}}
+function scene(c,t){
+  var T=+$("T").value,ang=(+$("dir").value)*2*Math.PI*t/T,col=$("col").value,hole=+$("hole").value,CX=700,CY=300,R=260,hr=hole+48,TP=Math.PI*2;
+  function dc(c,im,i){var p=$("p"+i).value,m=mot(t,$("m"+i).value,+$("k"+i).value,i,T),h=+$("h"+i).value,w=im.width*h/im.height;
+    c.save();if(p==="spin"){c.translate(CX,CY);c.rotate(ang);c.translate(-CX,-CY)}
+    c.translate((p==="out"?500:CX)+(+$("x"+i).value)+m.x,560+(+$("y"+i).value)+m.y);c.rotate(m.r*Math.PI/180);c.drawImage(im,-w/2,-h,w,h);c.restore()}
+  c.save();c.fillStyle="#f4f4f6";c.fillRect(40,40,520,520);
+  c.fillStyle="#111";c.fillRect(40,40,38,520);c.strokeStyle="#444";c.lineWidth=2;for(var x=48;x<78;x+=7){c.beginPath();c.moveTo(x,40);c.lineTo(x,560);c.stroke()}
+  c.save();c.beginPath();c.rect(94,73,454,454);c.clip();if(alb)cover(c,alb,321,300,454);else{c.fillStyle="#9aa";c.fillRect(94,73,454,454)}c.restore();
+  var gl=c.createLinearGradient(40,40,300,560);gl.addColorStop(0,"rgba(255,255,255,.45)");gl.addColorStop(.35,"rgba(255,255,255,0)");c.fillStyle=gl;c.fillRect(40,40,520,520);
+  c.strokeStyle="#c8c8cc";c.lineWidth=6;c.strokeRect(43,43,514,514);c.restore();
+  c.save();c.beginPath();c.arc(CX,CY,R,0,TP);c.arc(CX,CY,hole,0,TP,true);c.clip();
+  c.fillStyle=col;c.fillRect(CX-R,CY-R,2*R,2*R);
+  var art=$("art").checked;
+  if(alb&&art){c.save();c.translate(CX,CY);c.rotate(ang);cover(c,alb,0,0,2*R);c.restore()}
+  c.globalAlpha=.3;c.fillStyle=col;c.fillRect(CX-R,CY-R,2*R,2*R);c.globalAlpha=1;
+  chars.forEach(function(im,i){if(im&&$("p"+i).value!=="out")dc(c,im,i)});
+  if(c.createConicGradient){var cg=c.createConicGradient(.6+(art?0:ang),CX,CY);
+    if(art){[["#ff9ad5",0],["#9ad7ff",.25],["#fff39a",.5],["#a8ffd1",.75],["#ff9ad5",1]].forEach(function(q){cg.addColorStop(q[1],q[0])});c.globalAlpha=.14}
+    else{[[0,"rgba(255,255,255,0)"],[.07,"rgba(255,255,255,.75)"],[.14,"rgba(255,154,213,.25)"],[.25,"rgba(255,255,255,0)"],[.5,"rgba(255,255,255,0)"],[.57,"rgba(255,255,255,.75)"],[.64,"rgba(154,215,255,.25)"],[.75,"rgba(255,255,255,0)"],[1,"rgba(255,255,255,0)"]].forEach(function(q){cg.addColorStop(q[0],q[1])})}
+    c.fillStyle=cg;c.fillRect(CX-R,CY-R,2*R,2*R);c.globalAlpha=1}
+  var hg=c.createLinearGradient(CX-hr,CY-hr,CX+hr,CY+hr);hg.addColorStop(0,"#fff");hg.addColorStop(.5,col);hg.addColorStop(1,"#fff");
+  c.beginPath();c.arc(CX,CY,hr,0,TP);c.arc(CX,CY,hole,0,TP,true);c.fillStyle=hg;c.fill();c.restore();
+  c.strokeStyle="rgba(255,255,255,.85)";c.lineWidth=7;c.beginPath();c.arc(CX,CY,R-4,0,TP);c.stroke();
+  c.strokeStyle="#cfcfd6";c.lineWidth=2;[R,hr,hole].forEach(function(q){c.beginPath();c.arc(CX,CY,q,0,TP);c.stroke()});
+  chars.forEach(function(im,i){if(im&&$("p"+i).value==="out")dc(c,im,i)});
+}
+function draw(){g.clearRect(0,0,W0,H0);scene(g,elapsed)}
+function loop(ts){if(!busy){if(last!==null)elapsed+=(ts-last)/1000;last=ts;draw()}requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+function lzw(ix){
+  var out=[],bits=0,nb=0,cs=9,next=258,dict=new Map();
+  function emit(c){bits|=c<<nb;nb+=cs;while(nb>=8){out.push(bits&255);bits>>>=8;nb-=8}}
+  emit(256);var pre=ix[0];
+  for(var i=1;i<ix.length;i++){
+    var k=ix[i],key=(pre<<8)|k,v=dict.get(key);
+    if(v!==undefined){pre=v}
+    else{emit(pre);
+      if(next<4096){dict.set(key,next);if(next===(1<<cs))cs++;next++}
+      else{emit(256);dict.clear();cs=9;next=258}
+      pre=k}
+  }
+  emit(pre);emit(257);if(nb>0)out.push(bits&255);return out;
+}
+function medianCut(hist,N){
+  var cols=[];hist.forEach(function(c,k){cols.push({r:(k>>16)&255,g:(k>>8)&255,b:k&255,n:c})});
+  var boxes=[cols],CH=["r","g","b"];
+  while(boxes.length<N){
+    var bi=-1,bro=0,bch="r";
+    boxes.forEach(function(bx,i){if(bx.length<2)return;var mn={r:255,g:255,b:255},mx={r:0,g:0,b:0};
+      bx.forEach(function(c){CH.forEach(function(ch){if(c[ch]<mn[ch])mn[ch]=c[ch];if(c[ch]>mx[ch])mx[ch]=c[ch]})});
+      CH.forEach(function(ch){if(mx[ch]-mn[ch]>bro){bro=mx[ch]-mn[ch];bi=i;bch=ch}})});
+    if(bi<0)break;
+    var bx=boxes[bi].slice().sort(function(a,b){return a[bch]-b[bch]}),tot=0;bx.forEach(function(c){tot+=c.n});
+    var acc=0,cut=1;for(var q=0;q<bx.length-1;q++){acc+=bx[q].n;cut=q+1;if(acc>=tot/2)break}
+    boxes.splice(bi,1,bx.slice(0,cut),bx.slice(cut));
+  }
+  return boxes.map(function(bx){var r=0,g=0,b=0,t=0;bx.forEach(function(c){r+=c.r*c.n;g+=c.g*c.n;b+=c.b*c.n;t+=c.n});return[Math.round(r/t),Math.round(g/t),Math.round(b/t)]});
+}
+function gifBytes(w,h,list,delayCs,pal){
+  var o=[];function w16(v){o.push(v&255,(v>>8)&255)}
+  "GIF89a".split("").forEach(function(c){o.push(c.charCodeAt(0))});
+  w16(w);w16(h);o.push(0xF7,0,0);
+  for(var i=0;i<256;i++){var c=pal[i]||[0,0,0];o.push(c[0],c[1],c[2])}
+  o.push(0x21,0xFF,11);"NETSCAPE2.0".split("").forEach(function(c){o.push(c.charCodeAt(0))});o.push(3,1,0,0,0);
+  list.forEach(function(ix){
+    o.push(0x21,0xF9,4,9);w16(delayCs);o.push(255,0);
+    o.push(0x2C);w16(0);w16(0);w16(w);w16(h);o.push(0,8);
+    var d=lzw(ix);
+    for(var i=0;i<d.length;i+=255){var n=Math.min(255,d.length-i);o.push(n);for(var j=0;j<n;j++)o.push(d[i+j])}
+    o.push(0);
+  });
+  o.push(0x3B);return new Uint8Array(o);
+}
+
+$("mk").addEventListener("click",async function(){
+  var btn=this;btn.disabled=true;busy=true;
+  var T=+$("T").value,FPS=20,n=Math.min(300,T*FPS),W=800,sc=W/W0,H=Math.round(H0*sc),oc=document.createElement("canvas");oc.width=W;oc.height=H;
+  var og=oc.getContext("2d",{willReadFrequently:true});
+  function render(f){og.setTransform(1,0,0,1,0,0);og.clearRect(0,0,W,H);og.setTransform(sc,0,0,sc,0,0);scene(og,f/FPS);return og.getImageData(0,0,W,H).data}
+  $("msg").textContent="색을 고르는 중…";await new Promise(function(r){setTimeout(r,0)});
+  var hist=new Map();
+  for(var s0=0;s0<8;s0++){var d0=render(Math.floor(s0*n/8));
+    for(var i0=0;i0<d0.length;i0+=8){if(d0[i0+3]<128)continue;var k0=(d0[i0]<<16)|(d0[i0+1]<<8)|d0[i0+2];hist.set(k0,(hist.get(k0)||0)+1)}}
+  var ent=[];hist.forEach(function(c,k){ent.push([k,c])});ent.sort(function(a,b){return b[1]-a[1]});
+  var pal=[],rest=new Map();
+  ent.forEach(function(e,qi){if(qi<100)pal.push([(e[0]>>16)&255,(e[0]>>8)&255,e[0]&255]);else rest.set(e[0],e[1])});
+  if(rest.size)pal=pal.concat(medianCut(rest,255-pal.length-2));
+  pal.push([255,255,255],[0,0,0]);
+  function nearest(r,g,b){var best=0,bd=1e9;for(var c=0;c<pal.length;c++){var dr=pal[c][0]-r,dg=pal[c][1]-g,db=pal[c][2]-b,d=dr*dr+dg*dg+db*db;if(d<bd){bd=d;best=c}}return best}
+  var lut=new Map(),list=[];
+  for(var f=0;f<n;f++){
+    var px=render(f),ix=new Uint8Array(W*H);
+    for(var i=0,j=0;i<px.length;i+=4,j++){
+      if(px[i+3]<128){ix[j]=255;continue}
+      var key=(px[i]<<16)|(px[i+1]<<8)|px[i+2],v=lut.get(key);
+      if(v===undefined){v=nearest(px[i],px[i+1],px[i+2]);lut.set(key,v)}
+      ix[j]=v}
+    list.push(ix);$("msg").textContent="만드는 중… "+Math.round((f+1)/n*100)+"%";
+    await new Promise(function(r){setTimeout(r,0)});
+  }
+  var bl=new Blob([gifBytes(W,H,list,5,pal)],{type:"image/gif"}),a=document.createElement("a");
+  a.href=URL.createObjectURL(bl);a.download="cd-spin.gif";document.body.appendChild(a);a.click();a.remove();
+  $("msg").textContent="저장 완료!";btn.disabled=false;busy=false;last=null;
+});
+</script></body></html>
